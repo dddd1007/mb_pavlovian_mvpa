@@ -683,32 +683,41 @@ preproc.connect(cmb_tfm_t2_to_ds_atlas, ('out', unlist), t1_to_ds_atlas, 'transf
 mask_ds_mbRef = pe.MapNode(interface=fsl.ImageMaths(op_string = '-thr 1 -bin'), name = 'mask_ds_mbRef', iterfield=['in_file'])
 preproc.connect(mbRef_to_ds_atlas, 'output_image',  mask_ds_mbRef, 'in_file')
 
+# assemble the normalized mbRef of all participants
 join_mbRef = pe.JoinNode(interface=util.IdentityInterface(fields=['files']), joinfield=['files'], joinsource='datasource', name='join_mbRef')
 preproc.connect(mask_ds_mbRef, 'out_file', join_mbRef, 'files')
 
-merge_mbRef = pe.Node(interface=fsl.Merge(dimension = 't'), name = 'merge_mbRef') #, iterfield=['in_file'])
+# join normalized mbref images 
+merge_mbRef = pe.Node(interface=fsl.Merge(dimension = 't'), name = 'merge_mbRef') 
 preproc.connect(join_mbRef, ('files',  flatten), merge_mbRef, 'in_files')
 
-calc_overlap_mbRef = pe.Node(interface=fsl.ImageMaths(op_string = '-Tmean'), name = 'calc_overlap_mbRef') #, iterfield=['in_file'])
+# calculate how well normalized mbref overlap. 
+calc_overlap_mbRef = pe.Node(interface=fsl.ImageMaths(op_string = '-Tmean'), name = 'calc_overlap_mbRef') 
 preproc.connect(merge_mbRef, 'merged_file',  calc_overlap_mbRef, 'in_file')
 
+# create a mask based on the mbRef 
 mask_overlap_mbRef = pe.Node(interface=fsl.ImageMaths(op_string = '-thr .95 -bin'), name = 'mask_overlap_mbRef')
 preproc.connect(calc_overlap_mbRef, 'out_file', mask_overlap_mbRef, 'in_file')
 
-
 # determine ROI
-get_roi = pe.Node(interface=fsl.ImageStats(op_string='-w'), name = 'get_roi') #, iterfield=['in_file'])
+get_roi = pe.Node(interface=fsl.ImageStats(op_string='-w'), name = 'get_roi') 
 preproc.connect(mask_overlap_mbRef, 'out_file',  get_roi, 'in_file')
 
-split_roi_coords = pe.Node(interface=util.Split(splits=[1,1,1,1,1,1,1,1]), name='split_roi_coords') #, iterfield=['inlist'])
+split_roi_coords = pe.Node(interface=util.Split(splits=[1,1,1,1,1,1,1,1]), name='split_roi_coords') 
 preproc.connect(get_roi, 'out_stat',  split_roi_coords, 'inlist')
 
-# remove square brackets (['filename'] -> 'filename')
+
 def unlist_long(mylist):
-    print "Mylist"
-    print mylist
+    """ returns first element of a list as long
+    
+    Arguments:
+        mylist {list} -- list of numbers
+    
+    Returns:
+        long -- first element of a list as long
+    """
+
     r = mylist[0]
-    print r
     return long(r)
 
 # crop  mbRef
@@ -745,7 +754,7 @@ preproc.connect(split_roi_coords, ('out6', unlist_long), crop_overlap_mask, 'z_s
 
 # prepare mask
 
-downsample_striatum_to_func = pe.Node(interface=fsl.FLIRT(output_type = "NIFTI_GZ", in_file='/home/pauli/Development/atlas/striatum_one_700mu_mni_bin.nii.gz', reference='/home/pauli/Development/core_shell/data/CIT_Midbrain_Atlas/CIT168_T1w_700um_MNI.nii.gz', in_matrix_file='/usr/share/fsl/5.0/etc/flirtsch/ident.mat', interp='nearestneighbour'), name='downsample_striatum_to_func')
+downsample_striatum_to_func = pe.Node(interface=fsl.FLIRT(output_type = "NIFTI_GZ", in_file=os.path.join(data_dir, 'openfmri/group/striatum_one_700mu_mni_bin.nii.gz'), reference=os.path.join(data_dir, 'openfmri/group/CIT168_T1w_700um_MNI.nii.gz'), in_matrix_file=os.path.join(fsl_dir, '/etc/flirtsch/ident.mat'), interp='nearestneighbour'), name='downsample_striatum_to_func')
 preproc.connect(inputnode, ('func', get_voxel_size), downsample_striatum_to_func, 'apply_isoxfm')
 
 # crop functional and mbRef
@@ -780,7 +789,6 @@ preproc.connect(split_roi_coords, ('out6', unlist_long), crop_t1, 'z_size')
 
 
 # project downsampled ventricle mask into subject functional space
-
 sep_inv_tfms = pe.Node(interface=Function(input_names=['in_list'], output_names=['out_list'], function=get_sec_tfm),name='sep_inv_tfms')
 preproc.connect(ants_mbRef_to_t2_output, 'reverse_transforms', sep_inv_tfms, 'in_list')
 
@@ -795,16 +803,21 @@ preproc.connect(structs_to_atlas_coreg_output, ('reverse_transforms', get_first)
 #preproc.connect(ants_mbRef_to_t2_output, ('forward_transforms', get_sec), cmb_tfm_ds_atlas_to_func, 'in4')
 preproc.connect(sep_inv_tfms, 'out_list', cmb_tfm_ds_atlas_to_func, 'in1')
 
+
+
+
 # apply transformation to 4D func
 ds_ventricle_mask_to_func = pe.MapNode(interface=ants.WarpImageMultiTransform(use_nearest = True, input_image=ds_ventricle_mask), name = 'ds_ventricle_mask_to_func', iterfield=['transformation_series', 'reference_image'])
 preproc.connect(meanfunc, 'out_file', ds_ventricle_mask_to_func, 'reference_image')
 preproc.connect(cmb_tfm_ds_atlas_to_func, 'out', ds_ventricle_mask_to_func, 'transformation_series')
 
 
-# ---------------- RUN! ---------------------
+
+
+
+
+# ---------------- RUN! (good luck)---------------------
 
 preproc.write_graph()
 outgraph = preproc.run(plugin='MultiProc', plugin_args={'n_procs' : 5})
-# outgraph = preproc.run()
-#outgraph = preproc.run('PBS', plugin_args={'qsub_args': '-q batch -l walltime=2:00:00 -l pmem=1G -l nodes=1 -m n -M wolfgang.m.pauli@gmail.com'})
 
